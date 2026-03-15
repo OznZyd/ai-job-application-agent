@@ -28,6 +28,9 @@ class JobPosting(Base):
     description = Column(String)
     is_applied = Column(Boolean, default=False)
 
+    ai_score = Column(String)
+    ai_reasoning = Column(String)
+
 
 Base.metadata.create_all(engine)
 
