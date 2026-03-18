@@ -1,9 +1,15 @@
 import os
+import io
+from docx import Document
+from docx.shared import Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from dotenv import load_dotenv
 import google.generativeai as genai
 import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine
+from datetime import datetime
+
 
 load_dotenv()
 
@@ -42,6 +48,13 @@ my_profile= {
     "Engineering Background" : os.getenv("MY_BACKGROUND"),
     "Target and Vision" : os.getenv("MY_TARGET_AND_VISION")
 }
+
+letter_rules = os.getenv("COVER_LETTER_RULES")
+my_adress = os.getenv("MY_ADRESS", "").replace('\\n' , '\n')
+cover_letter_hobby = os.getenv("COVER_LETTER_HOBBY", "").replace('\\n' , '\n')
+cover_letter_closing = os.getenv("COVER_LETTER_CLOSING", "").replace('\\n' , '\n')
+ai_override = os.getenv("AI_OVERRIDE", "").replace('\\n', '\n')
+ai_format = os.getenv("AI_FORMAT", "").replace('\\n', '\n')
 
 
 engine = create_engine('sqlite:///jobs.db')
@@ -114,7 +127,68 @@ if chosen_advert:
 
     
     if st.button(f"{chosen_advert} for prepare a cover letter"):
-        st.success(f"{chosen_advert} Your cover letter is ready! Please check the folder.")
+        
+        today_date = datetime.now().strftime("%B %d, %Y")
+        job_page = filtered_df[filtered_df['title'] == chosen_advert]['company'].values[0]
+        chosen_job_detail = filtered_df[filtered_df['title'] == chosen_advert]['description'].values[0]
+
+        
+        ai_instructions = f"""
+
+        {ai_override}
+
+        {presidental_contituon}
+
+        Job Detail: {chosen_job_detail}
+        Company: {job_page}
+
+        {letter_rules}
+
+        {ai_format}
+        """
+
+        ai_motivation_letter = model.generate_content(ai_instructions).text.strip()
+
+        
+        doc = Document()
+        style = doc.styles['Normal']
+        style.font.name = 'Times New Roman'
+        style.font.size = Pt(11)
+
+        
+        adress_para= doc.add_paragraph()
+        adress_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        adress_run = adress_para.add_run(my_adress)
+        adress_run.font.size = Pt(12)
+
+        date_para = doc.add_paragraph()
+        date_run = date_para.add_run(f"\n{today_date}, Helmond\n\n")
+        date_run.font.size = Pt(12)
+
+        
+        doc.add_paragraph("Dear Hiring Manager,\n")
+        
+        doc.add_paragraph(ai_motivation_letter)
+        
+        doc.add_paragraph(cover_letter_hobby + "\n")
+        
+        doc.add_paragraph(cover_letter_closing)
+
+        
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
+
+        st.success("Motivation Letter is ready!")
+
+        
+        st.download_button(
+            label="⬇️ Download Motivation Letter",
+            data=buffer,
+            file_name=f"Ozan_Motivation_Letter_{job_page}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+
         
 
 
