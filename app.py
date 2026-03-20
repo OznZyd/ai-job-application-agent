@@ -1,5 +1,6 @@
 import os
 import io
+from docxtpl import DocxTemplate
 from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -55,6 +56,8 @@ cover_letter_hobby = os.getenv("COVER_LETTER_HOBBY", "").replace('\\n' , '\n')
 cover_letter_closing = os.getenv("COVER_LETTER_CLOSING", "").replace('\\n' , '\n')
 ai_override = os.getenv("AI_OVERRIDE", "").replace('\\n', '\n')
 ai_format = os.getenv("AI_FORMAT", "").replace('\\n', '\n')
+base_cv_info = os.getenv("BASE_CV_INFO", "").replace('\\n', '\n')
+ai_cv_prompt = os.getenv("AI_CV_PROMPT", "").replace('\\n', '\n')
 
 
 engine = create_engine('sqlite:///jobs.db')
@@ -189,7 +192,55 @@ if chosen_advert:
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 
-        
+
+    if st.button(f"{chosen_advert} for Generate Portfolio Summary"):
+
+        chosen_job_detail = filtered_df[filtered_df['title'] == chosen_advert]['description'].values[0]
+        job_page = filtered_df[filtered_df['title'] == chosen_advert]['company'].values[0]
+
+        ai_cv_instructions = f"""
+
+        {ai_cv_prompt}
+
+        {base_cv_info}
+
+        {chosen_job_detail}
+
+        """
+
+        ai_cv_content = model.generate_content(ai_cv_instructions).text.strip()
+
+        try:
+            summary_text = ai_cv_content.split("[TECHNICAL SKILLS]")[0].replace("[CV SUMMARY]", "").strip()
+            skills_text = ai_cv_content.split("[TECHNICAL SKILLS]")[1].strip()
+        except Exception as e:
+            summary_text = "Parsing error. AI output format was unexpected"
+            skills_text = ai_cv_content
+
+        doc = DocxTemplate("cv_template.docx")
+
+        context = {
+            'SUMMARY' : summary_text,
+            'SKILLS' : skills_text
+        }
+
+        doc.render(context)
+
+        cv_buffer = io.BytesIO()
+        doc.save(cv_buffer)
+        cv_buffer.seek(0)
+
+
+        st.success("Automated CV is ready with your custom format!")
+
+  
+
+        st.download_button(
+            label="⬇️ Adapted CV Download",
+            data=cv_buffer,
+            file_name=f"Ozan_CV_{chosen_advert}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
 
 
 
