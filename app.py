@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from datetime import datetime
 
 
@@ -62,14 +62,29 @@ ai_cv_prompt = os.getenv("AI_CV_PROMPT", "").replace('\\n', '\n')
 
 engine = create_engine('sqlite:///jobs.db')
 
+with engine.connect() as conn:
+    conn.execute(text("""
+    CREATE TABLE IF NOT EXISTS applied_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company TEXT,
+        job_title TEXT,
+        applied_date TEXT
+    )
+    """))
+    conn.commit()
+
 df = pd.read_sql("SELECT * FROM job_posting", engine)
 
 
 filtered_df = df[(df['location'].str.contains(choice_city, case=False, na=False))  & (df['ai_score'].astype(float) >= min_point)]
 
-st.subheader(f"{choice_city} Jobs in the Surrounding Area")
+tab1, tab2 = st.tabs(["Job Search", "My Applications"])
 
-clean_df = filtered_df.drop(columns=['id', 'external_id'], errors='ignore')
+with tab1:
+    st.subheader(f"{choice_city} Jobs in the Surrounding Area")
+
+    clean_df = filtered_df.drop(columns=['id', 'external_id'], errors='ignore')
+
 
 def points_colors(value):
     try:
@@ -242,6 +257,17 @@ if chosen_advert:
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 
+    st.divider()
+    if st.button(f"Mark as Applied for {chosen_advert}"):
+        apply_date = datetime.now().strftime("%Y-%m-%d")
+        job_page = filtered_df[filtered_df['title'] == chosen_advert]['company'].values[0]
+
+        with engine.connect() as conn:
+            conn.execute(text(f"INSERT INTO applied_jobs (company, job_title, applied_date) VALUES ('{job_page}', '{chosen_advert}', '{apply_date}')"))
+            conn.commit()
+
+        st.success("Successfully marked as applied! Check 'My Applications' tab.")
+
 
 
 if not filtered_df.empty:
@@ -251,3 +277,15 @@ if not filtered_df.empty:
 
     with st.expander(f"Why did AI give {top_job['ai_score']} points to {top_job['title']}?"):
         st.info(top_job['ai_reasoning'])
+
+with tab2:
+    st.subheader("My Job Applications")
+    try:
+        applied_jobs_df = pd.read_sql("SELECT * FROM applied_jobs", engine)
+        if not applied_jobs_df.empty:
+            clean_applied_df = applied_jobs_df.drop(columns=['id'], errors='ignore')
+            st.dataframe(clean_applied_df, hide_index=True, use_container_width=True)
+        else:
+            st.info("You haven't applied for any jobs hyet. Let's find one!")
+    except Exception as e:
+        st.info("No Application data found")
