@@ -1,6 +1,12 @@
+import os
+import io
+import json
+from docx import Document
+from docxtpl import DocxTemplate
+from fastapi.responses import StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
 import pandas as pd
-import os
 from sqlalchemy import create_engine, text
 from pydantic import BaseModel
 from datetime import datetime
@@ -8,21 +14,44 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 
 
-load_dotenv()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_PATH = os.path.join(BASE_DIR, "cv_template.docx")
 
+
+# 1. Initialize FastAPI
 job_search_api = FastAPI()
+
+# 2. Add CORS Middleware (Bulletproof setup for local development)
+job_search_api.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],     # Allow all origins to bypass browser blocks
+    allow_credentials=False, # Must be False when allow_origins is ["*"]
+    allow_methods=["*"],     # Allow all HTTP methods (GET, POST, etc.)
+    allow_headers=["*"],     # Allow all headers
+)
+
+load_dotenv()
 
 engine = create_engine('sqlite:///jobs.db')
 
 @job_search_api.get("/api/jobs")
-def get_jobs(city: str = "Eindhoven", min_score: int = 70):
+async def get_jobs():
+    try:
+       
+        df = pd.read_sql("SELECT * FROM job_posting", engine)
+        
+        if df.empty:
+            return []
 
+        
+        df = df.fillna("") 
 
-    df = pd.read_sql("SELECT * FROM job_posting", engine)
-
-    filtered_df = df[(df['location'].str.contains(city, case=False, na=False)) & (df['ai_score'].astype(float) >= min_score)]
-
-    return filtered_df.to_dict(orient="records")
+        
+        return df.to_dict(orient="records")
+        
+    except Exception as e:
+        print(f"Backend Hatası: {e}")
+        return []
 
 
 class JobApplication(BaseModel):
@@ -51,9 +80,91 @@ def save_applications(application_data: JobApplication):
 
 interview_secret_strategy = os.getenv("INTERVIEW_SECRET_STRATEGY", "").replace('\\n', '\n')
 base_cv_info = os.getenv("BASE_CV_INFO", "").replace('\\n', '\n')
+cover_letter_strategy = os.getenv("COVER_LETTER_STRATEGY", "").replace('\\n', '\n')
+cv_optimization_strategy = os.getenv("CV_OPTIMIZATION_STRATEGY", "").replace('\\n', '\n')
+cv_rules_and_json = os.getenv("CV_RULES_AND_JSON", "").replace('\\n', '\n')
+
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel('gemini-2.5-pro')
+
+
+class CvOptimizationRequest(BaseModel):
+    company_name : str
+    job_title : str
+    job_description : str
+
+
+@job_search_api.post("/api/optimize-cv")
+def optimize_cv(data: CvOptimizationRequest):
+    # 1. AI Prompt Construction (Kept exactly as requested)
+    ai_prompt = f"""
+    Act as an Expert IT/Software Recruiter and Resume Optimizer.
+    I will provide you with a base CV and a target Job Description.
+    
+    Target Company: {data.company_name}
+    Target Role: {data.job_title}
+    Job Description: {data.job_description}
+    
+    Base CV:
+    {base_cv_info}
+    
+    {cv_rules_and_json}
+    """
+
+    # 2. Trigger Gemini
+    try:
+        ai_response = model.generate_content(ai_prompt).text
+    except Exception as e:
+        print(f"!!! AI Error: {e}")
+        return {"status": "error", "message": "Gemini connection failed."}
+
+    # 3. Parse JSON response
+    try:
+        clean_json = ai_response.replace('```json', '').replace('```', '').strip()
+        parsed_data = json.loads(clean_json)
+    except Exception as e:
+        print(f"!!! JSON Parsing Error: {e}")
+        parsed_data = {
+            "SUMMARY": "AI response format error. Please try again.",
+            "SKILLS": [{"category": "Error", "details": "Check logs"}]
+        }
+
+    # 4. Word Generation Phase
+    try:
+        # Load template
+        doc = DocxTemplate(TEMPLATE_PATH)
+
+        # Map context safely
+        context = {
+            'SUMMARY': parsed_data.get('SUMMARY', 'No summary generated.'),
+            'SKILLS': parsed_data.get('SKILLS', []) 
+        }
+
+        # Render exactly ONCE
+        doc.render(context)
+
+        # Save to memory stream
+        file_stream = io.BytesIO()
+        doc.save(file_stream)
+        file_stream.seek(0) # Critical: Reset pointer to start
+
+        # Sanitize filename for macOS compatibility
+        safe_company = "".join([c if c.isalnum() else "_" for c in data.company_name])
+        
+        # 5. Return with explicit media type and exposed headers
+        return StreamingResponse(
+            file_stream, 
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={
+                "Content-Disposition": f"attachment; filename=Optimized_CV_{safe_company}.docx",
+                "Access-Control-Expose-Headers": "Content-Disposition"
+            }
+        )
+    except Exception as render_error:
+        print(f"!!! WORD/RENDER ERROR: {render_error}")
+        return {"status": "error", "message": str(render_error)}
+
 
 class CoverLetterRequest(BaseModel):
     company_name: str
@@ -74,15 +185,12 @@ def generate_cover_letter(data: CoverLetterRequest):
     {base_cv_info}
     
     INSTRUCTIONS:
-    1. Write a strong, attention-grabbing opening.
-    2. Highlight the candidate's unique superpower: transitioning from a strong Industrial/OT engineering background into Software Engineering. Emphasize how this diverse perspective brings unique value (e.g., understanding physical consequences of code, system reliability, pragmatic problem-solving) to {data.company_name}.
-    3. Connect the candidate's background directly to the requirements in the Job Description.
-    4. Keep it concise (max 3-4 paragraphs), modern, and confident. Avoid overly generic clichés.
-    5. Output ONLY the cover letter text, ready to be copied and pasted. Do not include any conversational filler.
+    {cover_letter_strategy}
     """
 
     ai_response = model.generate_content(ai_prompt).text
     return {"cover_letter": ai_response}
+
 
 
 class AiChatRequest(BaseModel):

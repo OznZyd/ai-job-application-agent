@@ -5,3 +5,5 @@ __pycache__/
 .env
 presidental_contituion.txt
 cv_template.docx
+node_modules/
+**/node_modules/
