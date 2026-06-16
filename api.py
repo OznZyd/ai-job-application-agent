@@ -373,6 +373,60 @@ def get_applications():
         return[]
     
 
+class InterviewChatRequest(BaseModel):
+    job_id: int
+    user_message: str
+
+@job_search_api.post("/api/interview-chat")
+def user_chat(data: InterviewChatRequest):
+
+    with engine.connect() as conn:
+        result = conn.execute(
+            text("SELECT interview_history, job_description FROM job_posting WHERE id = :id"),
+            {"id": data.job_id}
+        ).fetchone()
+
+        history_str = result[0] if result and result[0] else "[]"
+        interview_history = json.loads(history_str)
+        job_description = result[1] if result else ""
+
+    formatted_history = ""
+    for msg in interview_history:
+        formatted_history += f"{msg['sender'].upper()}: {msg['text']}\n"
+
+    ai_prompt = f"""
+    {interview_secret_strategy}
+    
+    Job Description:
+    {job_description}
+    
+    Candidate Base CV:
+    {base_cv_info}
+    
+    Interview History:
+    ---
+    {formatted_history}
+    ---
+    
+    Candidate's Latest Message: {data.user_message}
+    """
+    try:
+        ai_response = model.generate_content(ai_prompt).text
+    except Exception as e:
+        print(f"!!! AI Error: {e}")
+        return{"answer": "AI connection failed. Please try again"}
+    
+    interview_history.append({"sender": "user", "text": data.user_message})
+    interview_history.append({"sender": "ai", "text": ai_response})
+
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE job_posting SET interview_history = :history WHERE id = :id"),
+            {"history": json.dumps(interview_history), "id": data.job_id}
+        )
+    
+    return {"answer": ai_response}
+
 class RawJobData(BaseModel):
     raw_text: str
 

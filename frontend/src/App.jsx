@@ -16,22 +16,29 @@ function App() {
   const [selectedJob, setSelectedJob] = useState(null);
 
   // CHAT STATES
+  const [activeChatTab, setActiveChatTab] = useState('strategy'); // 'strategy' or 'interview'
   const [chatMessages, setChatMessages] = useState([]);
+  const [interviewMessages, setInterviewMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
   const chatEndRef = useRef(null);
 
   const [showRawDesc, setShowRawDesc] = useState(false);
 
+  // Auto-scroll for both chat rooms
   useEffect(() => {
     if (chatEndRef.current) {
       chatEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [chatMessages]);
+  }, [chatMessages, interviewMessages, activeChatTab]);
 
+  // Load both histories when a job is clicked
   useEffect(() => {
     if (selectedJob) {
       setShowRawDesc(false);
+      setActiveChatTab('strategy'); // Reset to strategy view when opening a new job
+      
+      // Parse Strategy History
       if (selectedJob.chat_history) {
         try {
           const parsedHistory = typeof selectedJob.chat_history === 'string' 
@@ -39,11 +46,26 @@ function App() {
             : selectedJob.chat_history;
           setChatMessages(parsedHistory || []);
         } catch (e) {
-          console.error("History Parse Error:", e);
+          console.error("Strategy Parse Error:", e);
           setChatMessages([]);
         }
       } else {
         setChatMessages([]);
+      }
+
+      // Parse Interview History
+      if (selectedJob.interview_history) {
+        try {
+          const parsedInterview = typeof selectedJob.interview_history === 'string'
+            ? JSON.parse(selectedJob.interview_history)
+            : selectedJob.interview_history;
+          setInterviewMessages(parsedInterview || []);
+        } catch (e) {
+          console.error("Interview Parse Error:", e);
+          setInterviewMessages([]);
+        }
+      } else {
+        setInterviewMessages([]);
       }
     }
   }, [selectedJob]);
@@ -70,12 +92,11 @@ function App() {
     fetchData();
   }, []);
 
-  // --- GÜNCELLENEN KISIM: MATBAA BUTONU ARTIK ID GÖNDERİYOR ---
   const handleDownload = async (job, type) => {
     try {
       setProcessingState({ id: job.id, type: type });
       const payload = {
-        job_id: job.id, // YENİ EKLENEN KRİTİK VERİ
+        job_id: job.id,
         company_name: job.company || "Unknown",
         job_title: job.title || "Unknown",
         job_description: job.description || "No description provided."
@@ -142,33 +163,53 @@ function App() {
 
     const userMessage = chatInput.trim();
     setChatInput("");
-    
-    setChatMessages(prev => [...prev, { sender: 'user', text: userMessage }]);
     setIsChatLoading(true);
 
-    try {
-      const response = await axios.post('http://127.0.0.1:8000/api/chat', {
-        job_id: selectedJob.id,
-        user_message: userMessage,
-        company: selectedJob.company || "Unknown Company",
-        job_description: selectedJob.description || ""
-      });
-
-      setChatMessages(prev => [...prev, { 
-        sender: 'ai', 
-        text: response.data.ai_answer,
-        isBoss: response.data.routed_to_pro 
-      }]);
-
-      fetchData();
-
-    } catch (err) {
-      console.error("Chat Error:", err);
-      setChatMessages(prev => [...prev, { sender: 'ai', text: "⚠️ Connection to the AI Council failed." }]);
-    } finally {
-      setIsChatLoading(false);
+    if (activeChatTab === 'strategy') {
+      // 1. STRATEGY ROOM LOGIC
+      setChatMessages(prev => [...prev, { sender: 'user', text: userMessage }]);
+      try {
+        const response = await axios.post('http://127.0.0.1:8000/api/chat', {
+          job_id: selectedJob.id,
+          user_message: userMessage,
+          company: selectedJob.company || "Unknown Company",
+          job_description: selectedJob.description || ""
+        });
+        setChatMessages(prev => [...prev, { 
+          sender: 'ai', 
+          text: response.data.ai_answer,
+          isBoss: response.data.routed_to_pro 
+        }]);
+        fetchData();
+      } catch (err) {
+        console.error("Chat Error:", err);
+        setChatMessages(prev => [...prev, { sender: 'ai', text: "⚠️ Connection to the AI Council failed." }]);
+      } finally {
+        setIsChatLoading(false);
+      }
+    } else {
+      // 2. INTERVIEW ROOM LOGIC
+      setInterviewMessages(prev => [...prev, { sender: 'user', text: userMessage }]);
+      try {
+        const response = await axios.post('http://127.0.0.1:8000/api/interview-chat', {
+          job_id: selectedJob.id,
+          user_message: userMessage
+        });
+        setInterviewMessages(prev => [...prev, { 
+          sender: 'ai', 
+          text: response.data.answer // Matches your Python return statement
+        }]);
+        fetchData();
+      } catch (err) {
+        console.error("Interview Chat Error:", err);
+        setInterviewMessages(prev => [...prev, { sender: 'ai', text: "⚠️ Connection to the Manager failed." }]);
+      } finally {
+        setIsChatLoading(false);
+      }
     }
   };
+
+  const currentMessages = activeChatTab === 'strategy' ? chatMessages : interviewMessages;
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 font-sans text-slate-800">
@@ -179,7 +220,7 @@ function App() {
           <div className="flex flex-wrap gap-2">
             <button onClick={() => setActiveTab('search')} className={`px-4 py-2 rounded-lg font-medium transition-colors ${activeTab === 'search' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>🔍 Job Search</button>
             <button onClick={() => setActiveTab('tracker')} className={`px-4 py-2 rounded-lg font-medium transition-colors ${activeTab === 'tracker' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>📊 Tracker ({applications.length})</button>
-            <button onClick={() => alert("Interview Room is Phase 4!")} className="px-4 py-2 rounded-lg font-medium transition-colors bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 ml-2">🎯 Interview Room</button>
+            <button onClick={() => alert("Select a job from the list and open the 'Interview Room' tab inside it to begin!")} className="px-4 py-2 rounded-lg font-medium transition-colors bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 ml-2">🎯 Interview Room</button>
             <div className="w-px h-8 bg-slate-200 mx-2 hidden md:block"></div>
             <button onClick={() => setIsAddModalOpen(true)} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium transition-colors shadow-sm">➕ Add Job</button>
             <button onClick={fetchData} className="px-4 py-2 bg-slate-100 text-slate-600 hover:bg-slate-200 rounded-lg transition-colors font-medium">{loading ? "🔄..." : "Refresh"}</button>
@@ -234,6 +275,7 @@ function App() {
           <div className="fixed inset-0 bg-slate-900 bg-opacity-60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
             <div className="bg-white rounded-3xl w-full max-w-6xl shadow-2xl flex flex-col md:flex-row overflow-hidden h-[85vh]">
               
+              {/* LEFT PANEL: JOB DETAILS */}
               <div className="w-full md:w-1/2 p-8 flex flex-col border-r border-slate-100 bg-white overflow-y-auto">
                 <div className="flex justify-between items-start mb-6">
                   <div>
@@ -277,30 +319,43 @@ function App() {
                 </div>
               </div>
 
+              {/* RIGHT PANEL: CHAT TABS */}
               <div className="w-full md:w-1/2 flex flex-col bg-slate-50 h-full relative">
-                <div className="p-4 border-b border-slate-200 bg-white flex justify-between items-center shadow-sm z-10">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-slate-900 rounded-full flex items-center justify-center text-white text-xl shadow-md">🏛️</div>
-                    <div>
-                      <h3 className="font-bold text-slate-900">Strategy Room</h3>
-                      <p className="text-xs text-slate-500">Prepare your CV & Letter approach</p>
-                    </div>
-                  </div>
-                  <button onClick={() => setSelectedJob(null)} className="p-2 text-slate-400 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-full transition-colors">✕</button>
+                
+                {/* Custom Tab Header */}
+                <div className="flex w-full bg-white z-10 shadow-sm">
+                  <button onClick={() => setActiveChatTab('strategy')} className={`flex-1 py-4 text-sm font-bold flex justify-center items-center gap-2 transition-colors ${activeChatTab === 'strategy' ? 'text-blue-700 border-b-2 border-blue-600 bg-blue-50' : 'text-slate-500 hover:bg-slate-50'}`}>
+                    🏛️ Strategy Room
+                  </button>
+                  <button onClick={() => setActiveChatTab('interview')} className={`flex-1 py-4 text-sm font-bold flex justify-center items-center gap-2 transition-colors ${activeChatTab === 'interview' ? 'text-purple-700 border-b-2 border-purple-600 bg-purple-50' : 'text-slate-500 hover:bg-slate-50'}`}>
+                    🎯 Interview Room
+                  </button>
+                  <button onClick={() => setSelectedJob(null)} className="px-4 text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">✕</button>
                 </div>
 
+                {/* Chat Display Area */}
                 <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                  {chatMessages.length === 0 ? (
+                  {currentMessages.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-center opacity-50">
-                      <span className="text-5xl mb-4">💬</span>
-                      <p className="text-sm font-medium">Discuss CV strategy with the President,<br/>or ask Scout for quick job details.</p>
+                      <span className="text-5xl mb-4">{activeChatTab === 'strategy' ? '💬' : '🎤'}</span>
+                      <p className="text-sm font-medium">
+                        {activeChatTab === 'strategy' 
+                          ? "Discuss CV strategy with the Manager, or ask Scout for quick job details." 
+                          : "Start your technical/HR interview simulation with the Manager here."}
+                      </p>
                     </div>
                   ) : (
-                    chatMessages.map((msg, idx) => (
+                    currentMessages.map((msg, idx) => (
                       <div key={idx} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[85%] p-4 rounded-2xl ${msg.sender === 'user' ? 'bg-blue-600 text-white rounded-tr-none' : msg.isBoss ? 'bg-slate-900 text-white rounded-tl-none border border-slate-700 shadow-lg' : 'bg-white text-slate-800 rounded-tl-none border border-slate-200 shadow-sm'}`}>
-                          {msg.sender === 'ai' && msg.isBoss && <div className="text-[10px] font-bold uppercase tracking-wider text-purple-300 mb-2 border-b border-slate-700 pb-1">👑 Strategist AI (Pro)</div>}
-                          {msg.sender === 'ai' && !msg.isBoss && <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 border-b border-slate-100 pb-1">⚡ Scout AI (Flash)</div>}
+                        <div className={`max-w-[85%] p-4 rounded-2xl ${
+                          msg.sender === 'user' 
+                            ? 'bg-blue-600 text-white rounded-tr-none' 
+                            : (activeChatTab === 'interview' || msg.isBoss) 
+                              ? 'bg-slate-900 text-white rounded-tl-none border border-slate-700 shadow-lg' 
+                              : 'bg-white text-slate-800 rounded-tl-none border border-slate-200 shadow-sm'
+                        }`}>
+                          {msg.sender === 'ai' && (activeChatTab === 'interview' || msg.isBoss) && <div className="text-[10px] font-bold uppercase tracking-wider text-purple-300 mb-2 border-b border-slate-700 pb-1">👑 Manager AI (Pro)</div>}
+                          {msg.sender === 'ai' && activeChatTab === 'strategy' && !msg.isBoss && <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 border-b border-slate-100 pb-1">⚡ Scout AI (Flash)</div>}
                           <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.text}</p>
                         </div>
                       </div>
@@ -312,10 +367,11 @@ function App() {
                   <div ref={chatEndRef} />
                 </div>
 
+                {/* Input Area */}
                 <div className="p-4 bg-white border-t border-slate-200">
                   <div className="flex gap-2">
-                    <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} placeholder="Type a strategy question..." className="flex-1 p-3 bg-slate-100 border-none rounded-xl focus:ring-2 focus:ring-slate-900 outline-none text-sm" />
-                    <button onClick={handleSendMessage} disabled={!chatInput.trim() || isChatLoading} className="px-5 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 disabled:bg-slate-300 transition-colors">Send</button>
+                    <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} placeholder={activeChatTab === 'strategy' ? "Type a strategy question..." : "Answer the interview question..."} className="flex-1 p-3 bg-slate-100 border-none rounded-xl focus:ring-2 focus:ring-slate-900 outline-none text-sm" />
+                    <button onClick={handleSendMessage} disabled={!chatInput.trim() || isChatLoading} className={`px-5 py-3 text-white rounded-xl font-bold disabled:bg-slate-300 transition-colors ${activeChatTab === 'strategy' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-purple-600 hover:bg-purple-700'}`}>Send</button>
                   </div>
                 </div>
               </div>
